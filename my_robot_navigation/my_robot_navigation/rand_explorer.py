@@ -79,7 +79,7 @@ class ArtExplorer(Node):
 
     def apriltag_callback(self, msg):
         for detection in msg.detections:
-            if detection.decision_margin > 150 and detection.id not in self.detected_tags:
+            if detection.decision_margin > 180 and detection.id not in self.detected_tags:
                 self.detected_tags.append(detection.id)
                 self.get_logger().info(f"Detected tag with ID: {detection.id} and decision margin: {detection.decision_margin}")
                 if len(self.detected_tags) >= 3 and len(self.detected_images) >= 3:
