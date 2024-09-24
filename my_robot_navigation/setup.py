@@ -26,6 +26,7 @@ setup(
 'console_scripts': [
     'auto_explorer = my_robot_navigation.auto_explorer:main',
     'art_explorer = my_robot_navigation.art_explorer:main',
+    'rand_explorer = my_robot_navigation.rand_explorer:main',
         ],
     },
 )
