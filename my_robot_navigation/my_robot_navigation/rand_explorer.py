@@ -69,6 +69,7 @@ class ArtExplorer(Node):
         )
         self.initial_pose = None
         self.detected_tags = []
+        self.detected_images = []
         self.state = State.INIT
 
     def amcl_pose_callback(self, msg):
@@ -81,7 +82,7 @@ class ArtExplorer(Node):
             if detection.decision_margin > 150 and detection.id not in self.detected_tags:
                 self.detected_tags.append(detection.id)
                 self.get_logger().info(f"Detected tag with ID: {detection.id} and decision margin: {detection.decision_margin}")
-                if len(self.detected_tags) >= 3:
+                if len(self.detected_tags) >= 3 and len(self.detected_images) >= 3:
                     self.state = State.RETURN
 
     def detected_images_callback(self, msg):
@@ -197,7 +198,9 @@ class ArtExplorer(Node):
         """Log the detected AprilTags and YOLO detections"""
         for tag_id in self.detected_tags:
             for detected_image in self.detected_images_callback:
-                self.get_logger().info(f"{tag_id}: {detected_image}")
+                if detected_image not in self.detected_images:
+                    self.detected_images.append(detected_image)
+                    self.get_logger().info(f"{tag_id}: {detected_image}")
 
 def generate_next_position():
     """Return the next center point from the shuffled grid centers"""
