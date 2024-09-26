@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import random
+from enum import Enum
 from math import radians
 import math
 import sys
@@ -18,30 +20,30 @@ map_max_x = 12.5
 map_min_y = -0.5
 map_max_y = 12.5
 
-# List of 16 Key points
-key_points = [
-    (2.7, 0.0, 0.0),
-    # (0.0, 1.0, 0.0),
-    (2.5, 4.7, 0.0),
-    (0.0, 12.0, 0.0),
-    (3.0, 9.0, 0.0),
-    (9.0, 9.0, 0.0),
-    (9.0, 6.5, 0.0),
-    (3.5, 12.0, 0.0),
-    (9.0, 12.0, 0.0),
-    (12.0, 12.0, 0.0),
-    (12.0, 8.0, 0.0),
-    (12.0, 0.5, 0.0),
-    (9.0, 0.5, 0.0),
-    (6.0, 0.0, 0.0),
-    (6.0, 3.5, 0.0),
-    (6.0, 5.5, 0.0)
+# Calculate the centers of the 5x5 grid cells
+grid_size = 5
+cell_width = (map_max_x - map_min_x) / grid_size
+cell_height = (map_max_y - map_min_y) / grid_size
+
+grid_centers = [
+    (map_min_x + (i + 0.5) * cell_width, map_min_y + (j + 0.5) * cell_height, 0.0)
+    for i in range(grid_size) for j in range(grid_size)
 ]
+
+# Shuffle the grid centers to visit them in random order
+random.shuffle(grid_centers)
+
 # Initialize an index to keep track of the current point
 current_index = 0
 
 success = True
 initial_pose = None
+
+class State(Enum):
+    INIT = 1
+    NAVIGATE = 2
+    ROTATE = 3
+    RETURN = 4
 
 class ArtExplorer(Node):
     def __init__(self):
@@ -67,6 +69,8 @@ class ArtExplorer(Node):
         )
         self.initial_pose = None
         self.detected_tags = []
+        self.detected_images = []
+        self.state = State.INIT
 
     def amcl_pose_callback(self, msg):
         if self.initial_pose is None:
@@ -75,43 +79,11 @@ class ArtExplorer(Node):
 
     def apriltag_callback(self, msg):
         for detection in msg.detections:
-            if detection.decision_margin > 150 and detection.id not in self.detected_tags:
+            if detection.decision_margin > 180 and detection.id not in self.detected_tags:
                 self.detected_tags.append(detection.id)
                 self.get_logger().info(f"Detected tag with ID: {detection.id} and decision margin: {detection.decision_margin}")
-                if len(self.detected_tags) >= 3:
-                    if self.initial_pose is None:
-                        self.get_logger().error("Initial pose is not set")
-                        return
-                    goal = NavigateToPose.Goal()
-                    goal.pose.header.frame_id = "map"
-                    goal.pose.header.stamp = self.get_clock().now().to_msg()
-                    goal.pose.pose.position = self.initial_pose.position
-                    goal.pose.pose.orientation = self.initial_pose.orientation
-
-                    self.get_logger().info("Returning to initial pose")
-
-                    send_goal_future = self.nav_to_pose_client.send_goal_async(goal)
-                    rclpy.spin_until_future_complete(self, send_goal_future)
-
-                    goal_handle = send_goal_future.result()
-
-                    if not goal_handle.accepted:
-                        self.get_logger().error("Return to initial pose goal was rejected")
-                        return
-
-                    get_result_future = goal_handle.get_result_async()
-                    rclpy.spin_until_future_complete(self, get_result_future)
-
-                    status = get_result_future.result().status
-                    if status == GoalStatus.STATUS_SUCCEEDED:
-                        self.get_logger().info("Returned to initial pose")
-                        self.log_detections()
-                        self.destroy_node()
-                        rclpy.shutdown()
-                    else:
-                        self.get_logger().error("Failed to return to initial pose")
-
-                    return
+                if len(self.detected_tags) >= 3 and len(self.detected_images) >= 3:
+                    self.state = State.RETURN
 
     def detected_images_callback(self, msg):
         detected_image = msg.data
@@ -151,7 +123,7 @@ class ArtExplorer(Node):
 
         if status == GoalStatus.STATUS_SUCCEEDED:
             self.get_logger().info("Reached Goal!!!")
-            self.perform_rotation()
+            self.state = State.ROTATE
 
         return status
 
@@ -187,29 +159,63 @@ class ArtExplorer(Node):
                 self.get_logger().error("Rotation goal failed")
                 return
 
+        self.state = State.NAVIGATE
+
+    def return_to_initial_pose(self):
+        if self.initial_pose is None:
+            self.get_logger().error("Initial pose is not set")
+            return
+        goal = NavigateToPose.Goal()
+        goal.pose.header.frame_id = "map"
+        goal.pose.header.stamp = self.get_clock().now().to_msg()
+        goal.pose.pose.position = self.initial_pose.position
+        goal.pose.pose.orientation = self.initial_pose.orientation
+
+        self.get_logger().info("Returning to initial pose")
+
+        send_goal_future = self.nav_to_pose_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, send_goal_future)
+
+        goal_handle = send_goal_future.result()
+
+        if not goal_handle.accepted:
+            self.get_logger().error("Return to initial pose goal was rejected")
+            return
+
+        get_result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, get_result_future)
+
+        status = get_result_future.result().status
+        if status == GoalStatus.STATUS_SUCCEEDED:
+            self.get_logger().info("Returned to initial pose")
+            self.log_detections()
+            self.destroy_node()
+            rclpy.shutdown()
+        else:
+            self.get_logger().error("Failed to return to initial pose")
+
     def log_detections(self):
         """Log the detected AprilTags and YOLO detections"""
         for tag_id in self.detected_tags:
             for detected_image in self.detected_images_callback:
-                self.get_logger().info(f"{tag_id}: {detected_image}")
+                if detected_image not in self.detected_images:
+                    self.detected_images.append(detected_image)
+                    self.get_logger().info(f"{tag_id}: {detected_image}")
 
-def generate_position():
-    """Return specific points to denote xy position on map"""
+def generate_next_position():
+    """Return the next center point from the shuffled grid centers"""
     global current_index
 
-    position = Point()
-
-    # Get the current point from the list
-    x, y, z = key_points[current_index]
-
-    position.x = x
-    position.y = y
-    position.z = z
-
-    # Update the index to the next point
-    current_index = (current_index + 1) % len(key_points)
-
-    return position
+    if current_index < len(grid_centers):
+        position = Point()
+        x, y, z = grid_centers[current_index]
+        position.x = x
+        position.y = y
+        position.z = z
+        current_index += 1
+        return position
+    else:
+        return None
 
 def generate_orientation():
     """Generate random orientation"""
@@ -221,8 +227,6 @@ def generate_orientation():
     return quat
 
 def main():
-    global current_index
-
     rclpy.init()
 
     auto_explorer = ArtExplorer()
@@ -231,15 +235,29 @@ def main():
     while not auto_explorer.nav_to_pose_client.wait_for_server(timeout_sec=2.0):
         auto_explorer.get_logger().info("Server still not available; waiting...")
 
-    while rclpy.ok() and len(auto_explorer.detected_tags) < 3:
-        try:
-            position = generate_position()
-            orientation = generate_orientation()
-            goal_handle = auto_explorer.send_goal(position, orientation)
-            status = auto_explorer.check_result(goal_handle)
-        except KeyboardInterrupt:
-            auto_explorer.get_logger().info("Shutdown requested... complying...")
+    while rclpy.ok():
+        if auto_explorer.state == State.INIT:
+            if auto_explorer.initial_pose is not None:
+                auto_explorer.get_logger().info("Initial position logged.")
+                auto_explorer.state = State.NAVIGATE
+
+        elif auto_explorer.state == State.NAVIGATE:
+            position = generate_next_position()
+            if position is not None:
+                orientation = generate_orientation()
+                goal_handle = auto_explorer.send_goal(position, orientation)
+                status = auto_explorer.check_result(goal_handle)
+            else:
+                auto_explorer.state = State.RETURN
+
+        elif auto_explorer.state == State.ROTATE:
+            auto_explorer.perform_rotation()
+
+        elif auto_explorer.state == State.RETURN:
+            auto_explorer.return_to_initial_pose()
             break
+
+        rclpy.spin_once(auto_explorer)
 
     auto_explorer.destroy_node()
     rclpy.shutdown()
