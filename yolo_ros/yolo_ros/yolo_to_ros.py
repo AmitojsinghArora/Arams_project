@@ -6,7 +6,7 @@ import torch
 from ultralytics import YOLO
 import math
 import time
-
+import os
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
@@ -26,7 +26,7 @@ class DetectionNode(Node):
         self.detections = self.create_publisher(Image, '/yolo_detections', 10)
         self.detected_images = self.create_publisher(String, '/detected_images', 10)
         self.subscription = self.create_subscription(Image, '/camera/image_raw', self.image_callback, 10)
-        self.model = YOLO('~/src/yolo_ros/best.pt')
+        self.model = YOLO(os.path.expanduser('~/arams_project//src/yolo_ros/best.pt'))
 
         # Suppress YOLOv8 logging
         logging.getLogger('ultralytics').setLevel(logging.ERROR)
@@ -49,7 +49,7 @@ class DetectionNode(Node):
                 confidence = math.ceil((box.conf[0] * 100)) / 100
 
                 # Only process and publish if confidence is above 75%
-                if confidence > 0.75:
+                if confidence < 0.75:
                     continue
 
                 detection_made = True
